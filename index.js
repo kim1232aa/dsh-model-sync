@@ -5,7 +5,13 @@
  * and handles UI-triggered one-click refreshes via loopback HTTP.
  */
 
-import { buildNormalizedModel, lookupModelsDev } from './lib/core.js';
+import {
+  buildNormalizedModel,
+  lookupModelsDev,
+  isCustomProvider,
+  getCandidateModelUrls,
+  mergeModelEntry,
+} from './lib/core.js';
 import { ModelsDevService } from './lib/models-dev.js';
 
 export const name = 'dsh-model-sync';
@@ -54,20 +60,35 @@ function readJsonBody(req, limit = 64 * 1024) {
 }
 
 async function fetchRemoteModels(baseUrl, apiKey, signal) {
-  const url = `${baseUrl.replace(/\/+$/, '')}/models`;
+  const candidates = getCandidateModelUrls(baseUrl);
   const headers = { 'User-Agent': 'dsh-model-sync/1.0.0' };
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
 
-  const res = await fetch(url, { headers, signal });
-  if (!res.ok) {
-    throw new Error(`Upstream ${url} returned ${res.status} ${res.statusText}`);
+  let lastError = null;
+
+  for (const url of candidates) {
+    try {
+      const res = await fetch(url, { headers, signal });
+      if (res.status === 404 || res.status === 405) {
+        lastError = new Error(`Endpoint ${url} returned ${res.status}`);
+        continue;
+      }
+      if (!res.ok) {
+        throw new Error(`Upstream ${url} returned ${res.status} ${res.statusText}`);
+      }
+      const json = await res.json();
+      const list = Array.isArray(json) ? json : json?.data;
+      if (!Array.isArray(list)) {
+        throw new Error(`Expected array of models from ${url}, got ${typeof list}`);
+      }
+      return list;
+    } catch (err) {
+      lastError = err;
+      if (signal?.aborted) throw err;
+    }
   }
-  const json = await res.json();
-  const list = Array.isArray(json) ? json : json?.data;
-  if (!Array.isArray(list)) {
-    throw new Error(`Expected array of models from ${url}, got ${typeof list}`);
-  }
-  return list;
+
+  throw lastError || new Error(`Failed to fetch models from candidate endpoints: ${candidates.join(', ')}`);
 }
 
 export function apply(ctx, config = {}) {
@@ -106,7 +127,11 @@ export function apply(ctx, config = {}) {
       if (!id || typeof id !== 'string') continue;
 
       const devEntry = lookupModelsDev(catalog, id);
-      const normalized = buildNormalizedModel(id, raw, devEntry, undefined);
+      const existing = existingMap.get(id);
+      const normalized = mergeModelEntry(
+        existing,
+        buildNormalizedModel(id, raw, devEntry, undefined),
+      );
 
       if (!existingMap.has(id)) {
         added += 1;
@@ -141,8 +166,8 @@ export function apply(ctx, config = {}) {
     }
 
     const routes = targetRoutes && targetRoutes.length > 0
-      ? targetRoutes.filter((r) => providers[r])
-      : Object.keys(providers).filter((p) => providers[p]?.baseUrl || providers[p]?.baseURL);
+      ? targetRoutes.filter((r) => isCustomProvider(r, providers[r]))
+      : Object.keys(providers).filter((r) => isCustomProvider(r, providers[r]));
 
     const results = [];
     const ops = [];

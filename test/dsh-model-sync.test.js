@@ -6,6 +6,9 @@ import {
   buildNormalizedModel,
   inferReasoningFromId,
   inferVisionFromId,
+  isCustomProvider,
+  getCandidateModelUrls,
+  mergeModelEntry,
 } from '../lib/core.js';
 
 test('candidate generation: bracket tags and routing suffixes', () => {
@@ -87,4 +90,73 @@ test('reasoning UI consistency: non-reasoning model strips thinkingLevelMap', ()
   const model = buildNormalizedModel('gpt-4o-mini', rawModel, undefined, undefined);
   assert.equal(model.reasoning, false);
   assert.equal(model.thinkingLevelMap, undefined);
+});
+
+test('custom provider guard: safely skips built-in and official endpoints', () => {
+  // Official DeepSeek without baseUrl (default built-in)
+  assert.equal(isCustomProvider('deepseek', { apiKey: 'mock' }), false);
+
+  // Official DeepSeek pointing to official endpoint
+  assert.equal(
+    isCustomProvider('deepseek', { baseUrl: 'https://api.deepseek.com', apiKey: 'mock' }),
+    false,
+  );
+
+  // Official OpenAI pointing to official endpoint
+  assert.equal(
+    isCustomProvider('openai', { baseUrl: 'https://api.openai.com/v1', apiKey: 'mock' }),
+    false,
+  );
+
+  // Built-in ID redirected to custom relay
+  assert.equal(
+    isCustomProvider('deepseek', { baseUrl: 'https://relay.custom.io/v1', apiKey: 'mock' }),
+    true,
+  );
+
+  // Generic custom provider
+  assert.equal(
+    isCustomProvider('custom-relay', { baseUrl: 'https://relay.custom.io/v1', apiKey: 'mock' }),
+    true,
+  );
+
+  // Explicit sync controls
+  assert.equal(
+    isCustomProvider('deepseek', { baseUrl: 'https://api.deepseek.com', sync: true }),
+    true,
+  );
+  assert.equal(
+    isCustomProvider('custom-relay', { baseUrl: 'https://relay.custom.io/v1', sync: false }),
+    false,
+  );
+});
+
+test('candidate URL builder: correctly tests /v1/models and falls back', () => {
+  const withoutV1 = getCandidateModelUrls('https://relay.example.com');
+  assert.deepEqual(withoutV1, [
+    'https://relay.example.com/v1/models',
+    'https://relay.example.com/models',
+  ]);
+
+  const withV1 = getCandidateModelUrls('https://relay.example.com/v1');
+  assert.deepEqual(withV1, ['https://relay.example.com/v1/models']);
+});
+
+test('mergeModelEntry: preserves user custom modalities and fields', () => {
+  const existing = {
+    id: 'custom-model',
+    contextWindow: 100000,
+    input: ['text', 'video'],
+    customParam: true,
+  };
+  const generated = {
+    id: 'custom-model',
+    contextWindow: 1050000,
+    input: ['text', 'image'],
+  };
+  const merged = mergeModelEntry(existing, generated);
+  assert.equal(merged.contextWindow, 1050000);
+  assert.ok(merged.input.includes('video'));
+  assert.ok(merged.input.includes('image'));
+  assert.equal(merged.customParam, true);
 });

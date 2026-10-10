@@ -23,7 +23,7 @@ Install using the DSH CLI:
 dsh plugin --profile web add dsh-model-sync
 
 # From GitHub
-dsh plugin --profile web add github:your-username/dsh-model-sync
+dsh plugin --profile web add github:kim1232aa/dsh-model-sync
 ```
 
 Restart DSH or reload the web interface after installation.

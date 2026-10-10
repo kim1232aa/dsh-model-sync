@@ -23,7 +23,7 @@ DeepSeek Harness (DSH) 插件：为自定义与第三方中转提供商自动发
 dsh plugin --profile web add dsh-model-sync
 
 # 或从 GitHub 安装
-dsh plugin --profile web add github:your-username/dsh-model-sync
+dsh plugin --profile web add github:kim1232aa/dsh-model-sync
 ```
 
 安装后重启 DSH，或重新加载 Web 界面。
