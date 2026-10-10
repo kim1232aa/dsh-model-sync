@@ -264,14 +264,27 @@
             }
 
             const results = data.results || [];
-            const summary = results
-              .map((r) => `${r.provider}: +${r.added || 0} / ~${r.updated || 0}`)
-              .join(', ') || 'Catalog is already up to date.';
-
-            showToast('ok', {
-              title: 'Models Synchronized',
-              detail: summary,
+            const failed = results.filter((r) => r.error);
+            const okRes = results.filter((r) => !r.error);
+            const parts = okRes.map((r) => {
+              const delta = (r.added || 0) + (r.updated || 0) + (r.removed || 0);
+              if (delta === 0) return `${r.provider}: already up to date`;
+              const bits = [`+${r.added || 0}`, `~${r.updated || 0}`];
+              if (r.removed) bits.push(`-${r.removed}`);
+              return `${r.provider}: ${bits.join(' / ')}`;
             });
+            const skipped = okRes.reduce((n, r) => n + (r.skipped || 0), 0);
+            if (skipped) parts.push(`${skipped} model(s) skipped as invalid or non-chat`);
+            const detail = parts.join(', ') || 'Catalog is already up to date.';
+
+            if (failed.length > 0) {
+              showToast('error', {
+                title: failed.length === results.length ? 'Model Sync Failed' : 'Model Sync Partially Failed',
+                detail: [...failed.map((r) => `${r.provider}: ${r.error}`), detail].join('\n'),
+              });
+            } else {
+              showToast('ok', { title: 'Models Synchronized', detail });
+            }
           } catch (err) {
             showToast('error', {
               title: 'Network Error',

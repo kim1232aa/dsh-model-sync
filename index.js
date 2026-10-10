@@ -11,6 +11,10 @@ import {
   isCustomProvider,
   getCandidateModelUrls,
   mergeModelEntry,
+  isNonChatModel,
+  validateModelRow,
+  validateModelList,
+  stableStringify,
 } from './lib/core.js';
 import { ModelsDevService } from './lib/models-dev.js';
 
@@ -61,7 +65,7 @@ function readJsonBody(req, limit = 64 * 1024) {
 
 async function fetchRemoteModels(baseUrl, apiKey, signal) {
   const candidates = getCandidateModelUrls(baseUrl);
-  const headers = { 'User-Agent': 'dsh-model-sync/1.0.0' };
+  const headers = { 'User-Agent': 'dsh-model-sync/1.1.0' };
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
 
   let lastError = null;
@@ -100,59 +104,83 @@ export function apply(ctx, config = {}) {
     logger,
   });
 
+  /**
+   * Resolve the provider API key the way DSH does: `apiKeyEnv` is a credential
+   * reference resolved through the credentials service (fallback: process env).
+   * A literal `apiKey` field is still honoured for hand-written configs.
+   */
+  async function resolveApiKey(providerConfig) {
+    const ref = providerConfig.apiKeyEnv;
+    if (typeof ref === 'string' && ref) {
+      const credentials = ctx.get('credentials', false);
+      if (credentials?.resolve) {
+        const hit = await credentials.resolve(ref);
+        if (hit?.value) return hit.value;
+      }
+      if (process.env[ref]) return process.env[ref];
+    }
+    return providerConfig.apiKey || undefined;
+  }
+
   async function syncProviderModels(providerId, providerConfig, catalog, signal) {
-    const baseUrl = providerConfig.baseUrl || providerConfig.baseURL;
-    const apiKey = providerConfig.apiKey;
+    const baseUrl = providerConfig.baseURL || providerConfig.baseUrl;
+    if (!baseUrl) throw new Error('provider has no baseURL');
+    const apiKey = await resolveApiKey(providerConfig);
     const existingModels = Array.isArray(providerConfig.models) ? providerConfig.models : [];
 
-    let fetchedList = [];
-    if (baseUrl) {
-      try {
-        fetchedList = await fetchRemoteModels(baseUrl, apiKey, signal);
-      } catch (err) {
-        logger?.warn?.(`[dsh-model-sync] Failed to fetch /models for ${providerId}: ${err.message}. Enriching existing models.`);
-        fetchedList = existingModels;
-      }
-    } else {
-      fetchedList = existingModels;
-    }
+    // A failed fetch is an error: never rewrite the catalog from stale data.
+    const fetchedList = await fetchRemoteModels(baseUrl, apiKey, signal);
 
     const existingMap = new Map(existingModels.map((m) => [m.id, m]));
     const nextModels = [];
+    const skipped = [];
+    const seen = new Set();
     let added = 0;
     let updated = 0;
+    let unchanged = 0;
 
     for (const raw of fetchedList) {
       const id = typeof raw === 'string' ? raw : raw?.id;
-      if (!id || typeof id !== 'string') continue;
+      if (!id || typeof id !== 'string' || seen.has(id)) continue;
+      seen.add(id);
+
+      const existing = existingMap.get(id);
+      // Embedding/TTS/image/moderation ids are not chat models; DSH only dispatches chat.
+      if (!existing && isNonChatModel(id)) {
+        skipped.push({ id, reason: 'not a chat model' });
+        continue;
+      }
 
       const devEntry = lookupModelsDev(catalog, id);
-      const existing = existingMap.get(id);
       const normalized = mergeModelEntry(
         existing,
-        buildNormalizedModel(id, raw, devEntry, undefined),
+        buildNormalizedModel(id, typeof raw === 'string' ? {} : raw, devEntry, undefined),
       );
 
-      if (!existingMap.has(id)) {
-        added += 1;
-      } else {
-        const old = existingMap.get(id);
-        if (
-          old.contextWindow !== normalized.contextWindow ||
-          old.maxTokens !== normalized.maxTokens ||
-          old.reasoning !== normalized.reasoning ||
-          JSON.stringify(old.input) !== JSON.stringify(normalized.input)
-        ) {
-          updated += 1;
-        }
+      const problems = validateModelRow(normalized);
+      if (problems.length > 0) {
+        skipped.push({ id, reason: problems.join('; ') });
+        continue;
       }
+
+      if (!existing) added += 1;
+      else if (stableStringify(existing) !== stableStringify(normalized)) updated += 1;
+      else unchanged += 1;
       nextModels.push(normalized);
     }
 
-    return { provider: providerId, models: nextModels, added, updated };
+    const removed = existingModels.filter((m) => m?.id && !seen.has(m.id)).length;
+    const listErrors = validateModelList(nextModels);
+    if (listErrors.length > 0) {
+      throw new Error(`Refusing to write ${providerId}: ${listErrors.slice(0, 3).join('; ')}`);
+    }
+    const changed = added + updated + removed > 0
+      || existingModels.length !== nextModels.length;
+
+    return { provider: providerId, models: nextModels, added, updated, removed, unchanged, skipped, changed };
   }
 
-  async function executeSync(targetRoutes) {
+  async function executeSync(targetRoutes, { dryRun = false } = {}) {
     const settings = ctx.get('settings', false);
     if (!settings) {
       throw new Error('DSH settings service is not yet available');
@@ -171,6 +199,7 @@ export function apply(ctx, config = {}) {
 
     const results = [];
     const ops = [];
+    const opRoutes = [];
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
@@ -182,29 +211,40 @@ export function apply(ctx, config = {}) {
 
         try {
           const res = await syncProviderModels(route, pConfig, catalog, controller.signal);
-          ops.push({
-            op: 'set',
-            path: ['providers', route, 'models'],
-            value: res.models,
-          });
+          if (res.changed && !dryRun) {
+            ops.push({ op: 'set', path: ['providers', route, 'models'], value: res.models });
+            opRoutes.push(route);
+          }
           results.push({
             provider: route,
             added: res.added,
             updated: res.updated,
+            removed: res.removed,
+            unchanged: res.unchanged,
+            skipped: res.skipped.length,
+            skippedModels: res.skipped.slice(0, 20),
+            wrote: false,
+            dryRun,
           });
         } catch (err) {
           logger?.error?.(`[dsh-model-sync] Error syncing provider ${route}: ${err.message}`);
-          results.push({
-            provider: route,
-            error: err.message,
-          });
+          results.push({ provider: route, error: err.message });
         }
       }
 
-      if (ops.length > 0) {
-        await settings.mutate(NS_SETTINGS, ops);
-        logger?.info?.(`[dsh-model-sync] Successfully synchronized ${ops.length} provider(s)`);
+      // One mutate per provider so a rejected route does not block the others.
+      for (let i = 0; i < ops.length; i += 1) {
+        const result = results.find((r) => r.provider === opRoutes[i]);
+        try {
+          await settings.mutate(NS_SETTINGS, [ops[i]]);
+          result.wrote = true;
+        } catch (err) {
+          result.error = `settings rejected the update: ${err.message}`;
+          logger?.error?.(`[dsh-model-sync] ${opRoutes[i]}: ${result.error}`);
+        }
       }
+      const wrote = results.filter((r) => r.wrote).length;
+      if (wrote > 0) logger?.info?.(`[dsh-model-sync] Synchronized ${wrote} provider(s)`);
     } finally {
       clearTimeout(timer);
     }
@@ -229,7 +269,7 @@ export function apply(ctx, config = {}) {
         try {
           const body = await readJsonBody(req);
           const target = typeof body.route === 'string' && body.route ? [body.route] : undefined;
-          const results = await executeSync(target);
+          const results = await executeSync(target, { dryRun: body.dryRun === true });
           writeJson(res, 200, { ok: true, results });
         } catch (err) {
           writeJson(res, 500, {
