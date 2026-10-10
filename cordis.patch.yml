@@ -1,0 +1,4 @@
+# dsh-model-sync bundle patch: mount the model catalog sync plugin
+- insert:
+    - id: dsh-model-sync
+      name: dsh-model-sync
