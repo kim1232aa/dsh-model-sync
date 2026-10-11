@@ -65,7 +65,7 @@ function readJsonBody(req, limit = 64 * 1024) {
 
 async function fetchRemoteModels(baseUrl, apiKey, signal) {
   const candidates = getCandidateModelUrls(baseUrl);
-  const headers = { 'User-Agent': 'dsh-model-sync/1.1.0' };
+  const headers = { 'User-Agent': 'dsh-model-sync/1.1.1' };
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
 
   let lastError = null;

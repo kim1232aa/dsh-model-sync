@@ -4,9 +4,8 @@ import {
   generateLookupCandidates,
   pickDevRepresentative,
   buildNormalizedModel,
-  inferReasoningFromId,
-  inferVisionFromId,
   isCustomProvider,
+  isNonChatModel,
   getCandidateModelUrls,
   mergeModelEntry,
   thinkingLevelMapFromDev,
@@ -60,26 +59,37 @@ test('contextWindow restoration: avoids gateway pricing cutoff truncation', () =
   const model = buildNormalizedModel('cx/gpt-6-astra', rawModel, devEntry, undefined);
   assert.equal(model.contextWindow, 1050000);
   assert.equal(model.maxTokens, 128000);
-  assert.ok(model.reasoningEfforts && typeof model.reasoningEfforts === 'object');
+  // reasoning model, but models.dev lists no effort levels: none are invented
+  assert.equal(model.reasoningEfforts, undefined);
   assert.deepEqual(model.input, ['text', 'image']);
 });
 
-test('reasoning UI consistency: reasoning true enforced if active thinking map exists', () => {
-  const rawModel = {
-    id: 'gpt-5.6-luna',
-    capabilities: {
-      reasoning: false, // Misreported by gateway
-      vision: true,
-      contextWindow: 1000000,
-      maxOutput: 100000,
-    },
-  };
+test('thinking levels are never invented from the id', () => {
+  // gateway says reasoning but models.dev has no effort data: no wire values are written
+  const row = buildNormalizedModel('gpt-5.6-luna', { capabilities: { reasoning: true, vision: true } }, undefined, undefined);
+  assert.equal(row.reasoningEfforts, undefined);
+  assert.deepEqual(validateModelRow(row), []);
+  // gateway says non-reasoning: honoured, not overridden by an id pattern
+  const off = buildNormalizedModel('gpt-5.6-luna', { capabilities: { reasoning: false } }, undefined, undefined);
+  assert.equal(off.reasoningEfforts, false);
+});
 
-  const model = buildNormalizedModel('gpt-5.6-luna', rawModel, undefined, undefined);
-  assert.equal(model.reasoning, undefined);
-  assert.equal(model.thinkingLevelMap, undefined);
-  assert.equal(model.reasoningEfforts.max, 'max');
-  assert.equal(model.reasoningEfforts.off, null);
+test('capabilities are never guessed from the id', () => {
+  for (const id of ['gpt-6-codex', 'relay/eco-gpt-6', 'relay/openai/gpt-5-2025-08-07', 'claude-4-x', 'gemini-9']) {
+    const row = buildNormalizedModel(id, {}, undefined, undefined);
+    assert.deepEqual(row.input, ['text'], id);
+    assert.equal(row.reasoningEfforts, false, id); // no reasoning signal => DSH non-reasoning form
+    assert.equal(row.contextWindow, 128000, id);
+    assert.equal(row.maxTokens, 16384, id);
+  }
+});
+
+test('non-chat filter covers image / video generation ids', () => {
+  for (const id of ['relay/kling/kling-video-o1', 'relay/kling/kling-v3', 'relay/gemini-3-pro-image', 'gemini-3.1-flash-image', 'text-embedding-3-small']) {
+    assert.equal(isNonChatModel(id), true, id);
+  }
+  assert.equal(isNonChatModel('gpt-5.6-luna'), false);
+  assert.equal(isNonChatModel('claude-sonnet-5-5'), false);
 });
 
 test('reasoning UI consistency: non-reasoning model strips thinkingLevelMap', () => {
@@ -251,3 +261,12 @@ test('no-op detection: stableStringify ignores key order and undefined', () => {
   const again = mergeModelEntry(row, buildNormalizedModel('gpt-5.6-luna', { capabilities: { reasoning: true } }, undefined, undefined));
   assert.equal(stableStringify(row), stableStringify(again));
 });
+
+test('generateLookupCandidates strips trailing date snapshots', () => {
+  const c = generateLookupCandidates('Relay-Plan/doubao-1-5-thinking-pro-250415');
+  assert.ok(c.includes('doubao-1-5-thinking-pro'));
+  assert.ok(c.includes('doubao-1.5-thinking-pro'));
+  assert.ok(generateLookupCandidates('gpt-5.4-2026-03-05').includes('gpt-5.4'));
+  assert.equal(generateLookupCandidates('qwen3-235b').includes('qwen3'), false);
+});
+
