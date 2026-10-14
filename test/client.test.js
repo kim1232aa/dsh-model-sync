@@ -5,7 +5,7 @@ import vm from 'node:vm';
 
 const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8');
 
-function fixture() {
+function fixture({ language = 'zh-CN' } = {}) {
   const nodes = [];
   const observers = [];
   const timers = new Map();
@@ -23,8 +23,14 @@ function fixture() {
       this.classes = new Set();
       this.classList = {
         contains: (value) => this.classes.has(value),
-        add: (value) => this.classes.add(value),
-        remove: (value) => this.classes.delete(value),
+        add: (value) => {
+          this.classes.add(value);
+          this.attributes.class = [...this.classes].join(' ');
+        },
+        remove: (value) => {
+          this.classes.delete(value);
+          this.attributes.class = [...this.classes].join(' ');
+        },
       };
       nodes.push(this);
     }
@@ -141,6 +147,7 @@ function fixture() {
   let lastPayload;
   const document = {
     head, body,
+    documentElement: { lang: language },
     createElement: (tag) => new Element(tag),
     querySelector: (selector) => nodes.find((node) => node.parentElement
       && selector === `[${Object.keys(node.attributes)[0]}]`) || null,
@@ -156,6 +163,7 @@ function fixture() {
   };
   const sandbox = {
     window: { __ModuleLoader__: { load: (value) => { registration = value; } } },
+    navigator: { language, languages: [language] },
     document,
     MutationObserver: class {
       constructor(callback) { this.callback = callback; this.connected = false; observers.push(this); }
@@ -167,6 +175,7 @@ function fixture() {
     fetch(url, options) {
       requests += 1;
       lastPayload = options?.body ? JSON.parse(options.body) : {};
+      lastPayload.__headers = options?.headers || {};
       return new Promise((resolve) => { resolveFetch = resolve; });
     },
     console,
@@ -176,7 +185,12 @@ function fixture() {
   return {
     plugin, header, head, body, observers, timers, modelsTitle, grokActions, deepseekActions,
     requests: () => requests,
-    lastPayload: () => lastPayload,
+    lastPayload: () => {
+      if (!lastPayload || typeof lastPayload !== 'object') return lastPayload;
+      const { __headers, ...rest } = lastPayload;
+      return rest;
+    },
+    lastHeaders: () => (lastPayload && lastPayload.__headers) || {},
     finishFetch: () => resolveFetch({ ok: true, json: async () => ({ ok: true, results: [] }) }),
     mount() {
       const disposers = [];
@@ -258,13 +272,59 @@ test('mounts refresh button on DSH Desktop models title and custom provider rows
   const deepseekBtn = f.deepseekActions.querySelector('[data-dsh-model-sync-refresh]');
   assert.equal(deepseekBtn, null, 'non-custom deepseek row should not have refresh button');
 
-  // Click title button -> triggers global sync (no route)
+  // Title has a labeled "全量刷新" button that syncs all immediately
+  assert.ok(titleBtn.classList.contains('dms-labeled') || titleBtn.attributes.class === 'dms-labeled'
+    || (titleBtn.classes && titleBtn.classes.has('dms-labeled')), 'title button is labeled 全量刷新');
   titleBtn.click();
   assert.deepEqual(f.lastPayload(), {});
 
-  // Click grok button -> triggers route sync
+  // Adjacent menu button opens preview / per-provider picker
+  const wrap = titleBtn.parentElement;
+  const menuBtn = wrap && wrap.children.find((n) => n !== titleBtn && 'data-dsh-model-sync-refresh' in n.attributes);
+  assert.ok(menuBtn, 'menu chevron exists next to 全量刷新');
+  menuBtn.click();
+  assert.deepEqual(f.lastPayload(), { action: 'list' });
+  const menu = f.body.children.find((n) => 'data-dsh-model-sync-menu' in n.attributes);
+  assert.ok(menu, 'menu is mounted');
+
+  // Click grok button -> per-provider sync (full /models for that gateway)
   grokBtn.click();
   assert.deepEqual(f.lastPayload(), { route: 'grok' });
 
+  dispose();
+});
+
+test('Chinese UI copy when browser language is zh', async () => {
+  const f = fixture({ language: 'zh-CN' });
+  const dispose = f.mount();
+  const titleBtn = f.modelsTitle.querySelector('[data-dsh-model-sync-refresh]');
+  assert.ok(titleBtn, 'title refresh button exists');
+  const label = titleBtn.children.find((c) => (c.attributes.class || '') === 'dms-label' || (c.classes && c.classes.has('dms-label')));
+  assert.ok(label, 'labeled button has .dms-label');
+  assert.equal(label.textContent, '全量刷新');
+  assert.match(titleBtn.title || titleBtn.attributes.title || '', /全量刷新/);
+
+  titleBtn.click();
+  assert.match(String(f.lastHeaders()['Accept-Language'] || ''), /^zh-CN/);
+
+  const wrap = titleBtn.parentElement;
+  const menuBtn = wrap && wrap.children.find((n) => n !== titleBtn && 'data-dsh-model-sync-refresh' in n.attributes);
+  menuBtn.click();
+  const menu = f.body.children.find((n) => 'data-dsh-model-sync-menu' in n.attributes);
+  assert.ok(menu);
+  const labels = menu.children.filter((c) => c.tag === 'button').map((b) => b.textContent);
+  assert.ok(labels.includes('全量刷新'), `menu has 全量刷新, got ${labels}`);
+  assert.ok(labels.includes('预览（不写入）'), `menu has 预览, got ${labels}`);
+  dispose();
+});
+
+test('English UI copy when browser language is en', async () => {
+  const f = fixture({ language: 'en-US' });
+  const dispose = f.mount();
+  const titleBtn = f.modelsTitle.querySelector('[data-dsh-model-sync-refresh]');
+  const label = titleBtn.children.find((c) => (c.attributes.class || '') === 'dms-label' || (c.classes && c.classes.has('dms-label')));
+  assert.equal(label.textContent, 'Refresh all');
+  titleBtn.click();
+  assert.match(String(f.lastHeaders()['Accept-Language'] || ''), /^en/);
   dispose();
 });

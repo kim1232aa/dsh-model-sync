@@ -7,6 +7,9 @@ import {
   isCustomProvider,
   isNonChatModel,
   getCandidateModelUrls,
+  getListingCandidates,
+  listingAuthHeaders,
+  parseListingBody,
   mergeModelEntry,
   thinkingLevelMapFromDev,
   healLegacyRow,
@@ -15,6 +18,7 @@ import {
   stableStringify,
   readSettingsNamespace,
   isValidModelId,
+  pruneMaterialized,
 } from '../lib/core.js';
 
 test('candidate generation: bracket tags and routing suffixes', () => {
@@ -158,6 +162,31 @@ test('candidate URL builder: correctly tests /v1/models and falls back', () => {
 
   const withV1 = getCandidateModelUrls('https://relay.example.com/v1');
   assert.deepEqual(withV1, ['https://relay.example.com/v1/models']);
+});
+
+test('listing candidates and auth follow DSH protocol shapes', () => {
+  assert.deepEqual(getListingCandidates('https://api.anthropic.com', 'anthropic-messages'), [
+    'https://api.anthropic.com/v1/models?limit=1000',
+  ]);
+  assert.deepEqual(getListingCandidates('https://api.anthropic.com/v1', 'anthropic-messages'), [
+    'https://api.anthropic.com/v1/models?limit=1000',
+  ]);
+  assert.deepEqual(getListingCandidates('https://gateway/v1', 'openai-completions'), [
+    'https://gateway/v1/models',
+  ]);
+  const anth = listingAuthHeaders('anthropic-messages', 'sk');
+  assert.equal(anth['x-api-key'], 'sk');
+  assert.equal(anth['anthropic-version'], '2023-06-01');
+  assert.equal(anth.Authorization, undefined);
+  const oai = listingAuthHeaders('openai-completions', 'sk');
+  assert.equal(oai.Authorization, 'Bearer sk');
+});
+
+test('parseListingBody accepts data[], models{}, and bare arrays', () => {
+  assert.deepEqual(parseListingBody({ data: [{ id: 'a' }, { id: 'b' }] }).map((m) => m.id), ['a', 'b']);
+  assert.deepEqual(parseListingBody({ models: { x: { name: 'X' }, y: { id: 'ignored' } } }).map((m) => m.id), ['x', 'y']);
+  assert.deepEqual(parseListingBody(['p', { id: 'q' }]).map((m) => m.id), ['p', 'q']);
+  assert.deepEqual(parseListingBody({}), []);
 });
 
 test('mergeModelEntry: preserves user custom fields and drops modalities DSH rejects', () => {
@@ -308,3 +337,26 @@ test('wildcard and non-concrete model IDs are rejected', () => {
   assert.ok(validateModelRow(row).some((e) => /wildcard/.test(e)));
 });
 
+
+test('merge keeps user display name when gateway has none', () => {
+  const merged = mergeModelEntry({ id: 'm', name: 'My Model' }, { id: 'm', name: 'm', contextWindow: 1, maxTokens: 1, input: ['text'] });
+  assert.equal(merged.name, 'My Model');
+});
+
+test('format: schema-materialized compat dicts are never written back', () => {
+  const parsed = {
+    id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash', contextWindow: 1048576, maxTokens: 65536,
+    input: ['text', 'image'], reasoningEfforts: { low: 'low', medium: 'medium', high: 'high' },
+    compat: { chatTemplateKwargs: {}, chatTemplateArgs: {} },
+  };
+  const pruned = pruneMaterialized(parsed);
+  assert.equal('compat' in pruned, false);
+  const merged = mergeModelEntry(parsed, buildNormalizedModel('gemini-3.8-flash', {}, undefined, undefined));
+  assert.equal('compat' in merged, false);
+  assert.equal(merged.name, 'Gemini 3.8 Flash');
+});
+
+test('format: user-authored compat values survive pruning', () => {
+  const row = { id: 'x', compat: { thinkingFormat: 'deepseek', supportsStore: false, chatTemplateArgs: {} } };
+  assert.deepEqual(pruneMaterialized(row).compat, { thinkingFormat: 'deepseek', supportsStore: false });
+});
