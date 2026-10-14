@@ -1,6 +1,6 @@
 {
   "name": "dsh-model-sync",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "DeepSeek Harness plugin: sync online custom/relay model catalogs with models.dev specifications and one-click refresh button in Models page.",
   "icon": "./icon.svg",
   "type": "module",

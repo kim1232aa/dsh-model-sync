@@ -34,7 +34,7 @@ export const name = 'dsh-model-sync';
 export const inject = ['settings'];
 
 export const REFRESH_PATH = '/api/dsh-model-sync/refresh';
-const VERSION = '1.5.0';
+const VERSION = '1.5.1';
 
 export const Config = Schema.object({
   settingsNamespace: Schema.string().default('llm-pi-ai')

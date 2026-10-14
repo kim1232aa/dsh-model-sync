@@ -91,11 +91,24 @@ test('capabilities are never guessed from the id', () => {
 });
 
 test('non-chat filter covers image / video generation ids', () => {
-  for (const id of ['relay/kling/kling-video-o1', 'relay/kling/kling-v3', 'relay/gemini-3-pro-image', 'gemini-3.1-flash-image', 'text-embedding-3-small']) {
+  for (const id of [
+    'relay/kling/kling-video-o1',
+    'relay/kling/kling-v3',
+    'relay/gemini-3-pro-image',
+    'gemini-3.1-flash-image',
+    'text-embedding-3-small',
+    // mid-id modality segments (gateway naming), not vendor-specific
+    'vendor-image-2.1-flash',
+    'vendor-video-2.5-flash',
+    'relay/foo-image-hd',
+  ]) {
     assert.equal(isNonChatModel(id), true, id);
   }
   assert.equal(isNonChatModel('gpt-5.6-luna'), false);
   assert.equal(isNonChatModel('claude-sonnet-5-5'), false);
+  // chat multimodal carve-outs stay keepable
+  assert.equal(isNonChatModel('qwen3-vl-image-understanding'), false);
+  assert.equal(isNonChatModel('kimi-k2-video-chat'), false);
 });
 
 test('reasoning UI consistency: non-reasoning model strips thinkingLevelMap', () => {
