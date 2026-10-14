@@ -1,13 +1,16 @@
 {
   "name": "dsh-model-sync",
-  "version": "1.1.1",
+  "version": "1.5.0",
   "description": "DeepSeek Harness plugin: sync online custom/relay model catalogs with models.dev specifications and one-click refresh button in Models page.",
+  "icon": "./icon.svg",
   "type": "module",
   "main": "index.js",
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
   },
   "files": [
     "index.js",
@@ -16,7 +19,9 @@
     "cordis.patch.yml",
     "README.md",
     "README.zh-CN.md",
-    "LICENSE"
+    "LICENSE",
+    "locale/*.json",
+    "icon.svg"
   ],
   "scripts": {
     "test": "node --test test/*.test.js"
@@ -37,13 +42,20 @@
   },
   "dsh": {
     "engines": {
-      "dsh": ">=0.1.7"
+      "dsh": ">=0.2.0-rc.1"
     },
     "bundle": {
       "patch": "./cordis.patch.yml"
     },
     "client": {
-      "platform": "web"
+      "platform": "web",
+      "immediately": true
     }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/schemastery": "^3.18.0"
+  },
+  "devDependencies": {
+    "@deepseek-ai/schemastery": "^3.18.4"
   }
 }
