@@ -14,6 +14,7 @@ import {
   validateModelList,
   stableStringify,
   readSettingsNamespace,
+  isValidModelId,
 } from '../lib/core.js';
 
 test('candidate generation: bracket tags and routing suffixes', () => {
@@ -293,5 +294,17 @@ test('readSettingsNamespace supports both get() and DSH SettingsForms.describe()
   assert.deepEqual(readSettingsNamespace(dshSettings, 'llm-pi-ai'), { providers: { a9: {}, avt: {} } });
   assert.equal(readSettingsNamespace(dshSettings, 'non-existent'), undefined);
   assert.equal(readSettingsNamespace(null, 'llm-pi-ai'), undefined);
+});
+
+test('wildcard and non-concrete model IDs are rejected', () => {
+  assert.equal(isValidModelId('claude-*'), false);
+  assert.equal(isValidModelId('gpt-4o*'), false);
+  assert.equal(isValidModelId('model?'), false);
+  assert.equal(isValidModelId('<custom>'), false);
+  assert.equal(isValidModelId('gpt-5.6-luna'), true);
+  assert.equal(isValidModelId('cc/claude-sonnet-5-5'), true);
+
+  const row = { id: 'claude-*', contextWindow: 128000, maxTokens: 16384 };
+  assert.ok(validateModelRow(row).some((e) => /wildcard/.test(e)));
 });
 

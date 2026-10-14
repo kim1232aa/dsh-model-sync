@@ -16,6 +16,7 @@ import {
   validateModelList,
   stableStringify,
   readSettingsNamespace,
+  isValidModelId,
 } from './lib/core.js';
 import { ModelsDevService } from './lib/models-dev.js';
 
@@ -145,6 +146,12 @@ export function apply(ctx, config = {}) {
       if (!id || typeof id !== 'string' || seen.has(id)) continue;
       seen.add(id);
 
+      // Skip non-concrete or wildcard model patterns (e.g. claude-*, gpt-*)
+      if (!isValidModelId(id)) {
+        skipped.push({ id, reason: 'contains wildcard or non-concrete pattern' });
+        continue;
+      }
+
       const existing = existingMap.get(id);
       // Embedding/TTS/image/moderation ids are not chat models; DSH only dispatches chat.
       if (!existing && isNonChatModel(id)) {
@@ -153,6 +160,12 @@ export function apply(ctx, config = {}) {
       }
 
       const devEntry = lookupModelsDev(catalog, id);
+      // For new models: only add if recognized in models.dev catalog to prevent flooding uncallable gateway routes
+      if (!existing && !devEntry) {
+        skipped.push({ id, reason: 'not verified in models.dev catalog' });
+        continue;
+      }
+
       const normalized = mergeModelEntry(
         existing,
         buildNormalizedModel(id, typeof raw === 'string' ? {} : raw, devEntry, undefined),
@@ -170,13 +183,22 @@ export function apply(ctx, config = {}) {
       nextModels.push(normalized);
     }
 
-    const removed = existingModels.filter((m) => m?.id && !seen.has(m.id)).length;
+    // Crucial: preserve existing configured models that weren't returned by the gateway
+    for (const existing of existingModels) {
+      if (existing?.id && !seen.has(existing.id)) {
+        nextModels.push(existing);
+        unchanged += 1;
+      }
+    }
+
+    const removed = 0;
     const listErrors = validateModelList(nextModels);
     if (listErrors.length > 0) {
       throw new Error(`Refusing to write ${providerId}: ${listErrors.slice(0, 3).join('; ')}`);
     }
-    const changed = added + updated + removed > 0
-      || existingModels.length !== nextModels.length;
+    const changed = added + updated > 0;
+
+    return { provider: providerId, models: nextModels, added, updated, removed, unchanged, skipped, changed };
 
     return { provider: providerId, models: nextModels, added, updated, removed, unchanged, skipped, changed };
   }
