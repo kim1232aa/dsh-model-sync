@@ -13,6 +13,7 @@ import {
   validateModelRow,
   validateModelList,
   stableStringify,
+  readSettingsNamespace,
 } from '../lib/core.js';
 
 test('candidate generation: bracket tags and routing suffixes', () => {
@@ -268,5 +269,29 @@ test('generateLookupCandidates strips trailing date snapshots', () => {
   assert.ok(c.includes('doubao-1.5-thinking-pro'));
   assert.ok(generateLookupCandidates('gpt-5.4-2026-03-05').includes('gpt-5.4'));
   assert.equal(generateLookupCandidates('qwen3-235b').includes('qwen3'), false);
+});
+
+test('readSettingsNamespace supports both get() and DSH SettingsForms.describe()', () => {
+  // Direct get() support
+  const legacySettings = {
+    get(ns) {
+      return ns === 'llm-pi-ai' ? { providers: { p1: {} } } : undefined;
+    },
+  };
+  assert.deepEqual(readSettingsNamespace(legacySettings, 'llm-pi-ai'), { providers: { p1: {} } });
+
+  // DSH SettingsForms.describe() support (no get method)
+  const dshSettings = {
+    describe() {
+      return [
+        { ns: 'ui-settings', value: { enabled: true } },
+        { ns: 'llm-pi-ai', value: { providers: { a9: {}, avt: {} } } },
+      ];
+    },
+    mutate() {},
+  };
+  assert.deepEqual(readSettingsNamespace(dshSettings, 'llm-pi-ai'), { providers: { a9: {}, avt: {} } });
+  assert.equal(readSettingsNamespace(dshSettings, 'non-existent'), undefined);
+  assert.equal(readSettingsNamespace(null, 'llm-pi-ai'), undefined);
 });
 

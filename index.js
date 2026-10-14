@@ -15,6 +15,7 @@ import {
   validateModelRow,
   validateModelList,
   stableStringify,
+  readSettingsNamespace,
 } from './lib/core.js';
 import { ModelsDevService } from './lib/models-dev.js';
 
@@ -187,7 +188,7 @@ export function apply(ctx, config = {}) {
     }
 
     const catalog = await modelsDev.getCatalog();
-    const section = settings.get(NS_SETTINGS);
+    const section = readSettingsNamespace(settings, NS_SETTINGS);
     const providers = section?.providers;
     if (!providers || typeof providers !== 'object') {
       return [];

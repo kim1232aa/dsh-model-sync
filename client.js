@@ -19,7 +19,18 @@
   try {
     load({
       id: 'dsh-model-sync',
-      factory: () => {
+      factory: () => ({
+        apply(ctx) {
+        let disposed = false;
+        const nodes = new Set();
+        const listeners = new Set();
+        const timers = new Set();
+
+        function listen(node, type, callback) {
+          node.addEventListener(type, callback);
+          listeners.add(() => node.removeEventListener(type, callback));
+        }
+
         const TOOLTIP = 'Sync model catalog from upstream & models.dev';
         const REFRESH_PATH = '/api/dsh-model-sync/refresh';
         const SEAT_ATTR = 'data-dsh-model-sync-refresh';
@@ -49,20 +60,24 @@
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            width: 24px;
-            height: 24px;
-            margin-left: 8px;
+            width: 28px;
+            height: 28px;
+            margin: 0 4px;
             padding: 3px;
-            border-radius: 6px;
+            border-radius: var(--dsw-radius-sm, 6px);
+            border: 0.5px solid var(--dsw-alias-border-l3, rgba(255, 255, 255, 0.12));
             cursor: pointer;
-            color: var(--dsw-alias-neutral-30, #9ca3af);
-            transition: color 0.15s ease, background-color 0.15s ease;
+            color: var(--dsw-alias-label-secondary, #9ca3af);
+            background: transparent;
+            transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
             user-select: none;
             vertical-align: middle;
+            box-sizing: border-box;
           }
           [${SEAT_ATTR}]:hover {
-            color: var(--dsw-alias-neutral-00, #ffffff);
-            background-color: var(--dsw-alias-neutral-80, rgba(255, 255, 255, 0.08));
+            color: var(--dsw-alias-label-primary, #ffffff);
+            background-color: var(--dsw-alias-interactive-bg-hover, rgba(255, 255, 255, 0.08));
+            border-color: var(--dsw-alias-border-l2, rgba(255, 255, 255, 0.2));
           }
           [${SEAT_ATTR}] .dms-icon {
             display: inline-flex;
@@ -176,6 +191,7 @@
           const style = document.createElement('style');
           style.setAttribute(STYLE_ATTR, '');
           style.textContent = CSS;
+          nodes.add(style);
           document.head.appendChild(style);
         }
 
@@ -185,12 +201,14 @@
             root = document.createElement('div');
             root.setAttribute(TOASTS_CONTAINER_ATTR, '');
             root.setAttribute('class', 'dms-toasts');
+            nodes.add(root);
             document.body.appendChild(root);
           }
           return root;
         }
 
         function showToast(kind, { title, detail, stack = '' }) {
+          if (disposed) return;
           const card = document.createElement('div');
           card.setAttribute('class', `dms-toast ${kind}`);
           card.setAttribute('role', kind === 'error' ? 'alert' : 'status');
@@ -204,8 +222,17 @@
           close.setAttribute('aria-label', 'Dismiss');
           close.textContent = '×';
 
-          const dismiss = () => card.remove();
+          let timer;
+          const dismiss = () => {
+            card.remove();
+            close.removeEventListener('click', dismiss);
+            listeners.delete(unlisten);
+            clearTimeout(timer);
+            timers.delete(timer);
+          };
+          const unlisten = () => close.removeEventListener('click', dismiss);
           close.addEventListener('click', dismiss);
+          listeners.add(unlisten);
           head.appendChild(strong);
           head.appendChild(close);
           card.appendChild(head);
@@ -222,7 +249,8 @@
           }
 
           getToastsRoot().appendChild(card);
-          setTimeout(dismiss, kind === 'error' ? ERROR_MS : SUCCESS_MS);
+          timer = setTimeout(dismiss, kind === 'error' ? ERROR_MS : SUCCESS_MS);
+          timers.add(timer);
         }
 
         function detectProviderKey(node) {
@@ -230,6 +258,10 @@
             for (const key of Object.keys(el)) {
               if (!key.startsWith('__reactFiber$') && !key.startsWith('__reactContainer$')) continue;
               for (let fiber = el[key], depth = 0; fiber && depth < 40; depth += 1, fiber = fiber.return) {
+                const row = fiber.memoizedProps?.row;
+                if (typeof row?.entry?.provider === 'string') return row.entry.provider;
+                const target = fiber.memoizedProps?.target;
+                if (typeof target?.provider === 'string') return target.provider;
                 const provider = fiber.memoizedProps?.provider;
                 if (typeof provider === 'string') return provider;
                 if (typeof provider?.provider === 'string') return provider.provider;
@@ -237,11 +269,19 @@
               }
             }
           }
+          const rowCard = node.closest?.('li, [class*="_rowCard"], [class*="_rowHead"]');
+          if (rowCard) {
+            const nameEl = rowCard.querySelector?.('[class*="_rowName"]');
+            if (nameEl && nameEl.textContent) {
+              const name = nameEl.textContent.trim();
+              if (name) return name;
+            }
+          }
           return undefined;
         }
 
         async function triggerSync(seat, route) {
-          if (seat.classList.contains('is-busy')) return;
+          if (disposed || seat.classList.contains('is-busy')) return;
           seat.classList.add('is-busy');
           seat.title = 'Syncing models from models.dev...';
 
@@ -306,6 +346,7 @@
           seat.setAttribute('tabindex', '0');
           seat.setAttribute('aria-label', TOOLTIP);
           seat.title = TOOLTIP;
+          nodes.add(seat);
 
           const iconSpan = document.createElement('span');
           iconSpan.setAttribute('class', 'dms-icon');
@@ -325,49 +366,80 @@
             triggerSync(seat, route);
           };
 
-          seat.addEventListener('click', handleClick);
-          seat.addEventListener('keydown', (e) => {
+          listen(seat, 'click', handleClick);
+          listen(seat, 'keydown', (e) => {
             if (e.key === 'Enter' || e.key === ' ') handleClick(e);
           });
 
-          // Insert before chevron or at the end of the header
-          const chevron = targetHeader.querySelector('svg, [data-dsh-part="chevron"], [aria-expanded]');
-          if (chevron && chevron.parentElement === targetHeader) {
-            targetHeader.insertBefore(seat, chevron);
+          // Insert before chevron, first button, or at the end of the header
+          const firstTarget = targetHeader.querySelector('button, svg, [data-dsh-part="chevron"], [aria-expanded]');
+          if (firstTarget && firstTarget.parentElement === targetHeader) {
+            targetHeader.insertBefore(seat, firstTarget);
           } else {
             targetHeader.appendChild(seat);
           }
         }
 
         function scanAndMount() {
+          if (disposed) return;
           injectStyles();
 
-          // Strategy 1: Capability editor header
-          const toggleHeaders = document.querySelectorAll(
+          // Strategy 1: DSH Desktop Models section title (global sync)
+          const sectionTitles = document.querySelectorAll(
+            '[class*="_section"] > h2[class*="_title"], [class*="_title"], h2'
+          );
+          sectionTitles.forEach((h2) => {
+            const text = h2.textContent?.trim();
+            if (text === '模型' || text === 'Models') {
+              createRefreshButton(h2);
+            }
+          });
+
+          // Strategy 2: DSH Desktop custom provider rows (rowActions)
+          const rowActions = document.querySelectorAll(
+            '[class*="_rowCard"] [class*="_rowActions"], [class*="_rowHead"] [class*="_rowActions"]'
+          );
+          rowActions.forEach((actions) => {
+            const rowCard = actions.closest?.('li, [class*="_rowCard"], [class*="_rowHead"]');
+            const hasCustomTag = rowCard?.querySelector?.('[class*="_rowTag"]');
+            const hasRemoveBtn = actions.querySelector?.('button[class*="_dangerButton"], button[aria-label*="remove"], button[aria-label*="删除"]');
+            if (hasCustomTag || hasRemoveBtn) {
+              createRefreshButton(actions);
+            }
+          });
+
+          // Strategy 3: Provider editor model catalog heading
+          const catalogHeadings = document.querySelectorAll(
+            '[class*="_modelListHead"] [class*="_modelCatalogHeading"]'
+          );
+          catalogHeadings.forEach(createRefreshButton);
+
+          // Strategy 4: Legacy / capability headers
+          const otherHeaders = document.querySelectorAll(
             'section[data-dsh-plugin="model-capabilities"] button[data-dsh-part="toggle"], ' +
             'section[data-dsh-part="panel"] button[data-dsh-part="toggle"], ' +
-            '[data-dsh-models-header]'
-          );
-          toggleHeaders.forEach(createRefreshButton);
-
-          // Strategy 2: Provider card titles in Models settings
-          const cardHeaders = document.querySelectorAll(
+            '[data-dsh-models-header], ' +
             '[data-dsh-settings-section="models"] [data-dsh-provider-card] h3, ' +
             '[data-dsh-settings-section="models"] [data-dsh-provider-card] header'
           );
-          cardHeaders.forEach(createRefreshButton);
+          otherHeaders.forEach(createRefreshButton);
         }
 
-        // Run scan initially
-        scanAndMount();
-
-        // Observe DOM mutations to keep button seated across React re-renders
-        const observer = new MutationObserver(() => {
-          scanAndMount();
+        const observer = new MutationObserver(scanAndMount);
+        ctx.effect(() => () => {
+          disposed = true;
+          observer.disconnect();
+          for (const timer of timers) clearTimeout(timer);
+          timers.clear();
+          for (const unlisten of listeners) unlisten();
+          listeners.clear();
+          for (const node of nodes) node.remove();
+          nodes.clear();
         });
-
+        scanAndMount();
         observer.observe(document.body, { childList: true, subtree: true });
-      },
+        },
+      }),
     });
   } catch (err) {
     console.warn('[dsh-model-sync] Client initialization error:', err);
