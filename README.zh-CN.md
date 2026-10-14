@@ -6,7 +6,7 @@ DeepSeek Harness (DSH) 插件：为自定义与第三方中转提供商自动发
 
 ## 核心特性
 
-- **Web 界面一键刷新按钮**：自动挂载在 DSH 模型设置卡片与能力面板头部，带有悬停 360° 旋转与加载反馈动画，完成后弹出 Toast 通知同步统计。
+- **Web 界面一键刷新（中英 UI）**：自动挂载在 DSH 模型设置卡片与能力面板头部，带有悬停 360° 旋转与加载反馈动画，完成后弹出 Toast 通知同步统计。
 - **防止中转计费阈值截断**：采用 `Math.max(网关值, 官方标准值)`，避免网关内部 272k、128k 等计费阶梯压低模型真实上下文（例如将 `gpt-6-astra` 恢复至官方 1,050,000 上下文）。
 - **智能标签与路由后缀剥离**：自动识别并剥离中转特有的计费标签（如 `[1m]`）、路由标记（`-review`、`-sol`、`-luna`）以及版本变体（`-high`、`-low`、`-tiered`），精确命中官方能力数据库。
 - **只写 DSH 认的字段（v1.1.0）**：仅输出 DSH 模型条目接受的 `id`、`name`、`contextWindow`、`maxTokens`、`input`（仅 `text`/`image`）、`reasoningEfforts`。非推理模型写 `reasoningEfforts: false`；推理模型只写 models.dev 给出的真实 DSH 档位（`off`~`max`），不会写出只有 `off` 的字典，也不会凭空编档位。
@@ -38,9 +38,10 @@ dsh plugin --profile web add github:kim1232aa/dsh-model-sync
 1. 打开 DSH Web 界面：**设置 → 模型 (Models)**。
 2. 在提供商配置面板或能力设置头部，即可看到新增的刷新图标。
 3. 鼠标悬停时图标平滑旋转，点击即可触发实时同步。
-4. 同步完成后，右下角 Toast 会按提供商显示新增 / 更新 / 移除数量、“已是最新”、被跳过的模型及各提供商的错误。
+4. **模型**标题旁有可见的「全量刷新」按钮（一键拉所有可同步供应商的网关 `/models`），旁边小三角可打开菜单：预览 / 按供应商。每个自定义供应商行上的刷新按钮会拉**该供应商网关的全量模型列表**（不是只刷已配置的那一个）。支持 OpenAI 兼容（`openai-completions` / `openai-responses`）与 Anthropic（`anthropic-messages`）协议。界面文字（按钮、菜单、Toast、错误提示）随浏览器语言或 DSH 设置中的语言显示中文或英文；插件配置项说明也有中文。写入前把该供应商原 `models` 备份到 `backupDir`（默认系统临时目录/dsh-model-sync-backups）。
+5. 同步完成后，右下角 Toast 会按提供商显示新增 / 更新 / 移除数量、“已是最新”、被跳过的模型及各提供商的错误。
 
-预览（不写入）：从本机回环向 `POST /api/dsh-model-sync/refresh` 发送 `{"dryRun": true}`，返回同样的结果列表且 `wrote: false`。
+预览（不写入）：从本机回环向 `POST /api/dsh-model-sync/refresh` 发送 `{"dryRun": true}`（`{"route":"<id>"}` / `{"routes":[...]}` 单独刷新，`{"action":"list"}` 列出供应商），返回同样的结果列表且 `wrote: false`。
 
 ---
 

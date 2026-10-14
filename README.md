@@ -38,9 +38,10 @@ Restart DSH or reload the web interface after installation.
 1. Navigate to **Settings → Models** in the DSH Web UI.
 2. The refresh icon will appear in the provider and capability headers.
 3. Click the icon to trigger synchronization.
-4. A toast shows added / updated / removed counts per provider, "already up to date", skipped models, and per-provider errors.
+4. A visible **Refresh all** button next to the **Models** title pulls every syncable provider's gateway `/models` list; the adjacent chevron opens Preview / per-provider picks. Each custom provider row's refresh pulls that gateway's **full** model list (not just the already-configured rows). OpenAI-compatible (`openai-completions` / `openai-responses`) and Anthropic (`anthropic-messages`) protocols are supported. UI text follows the browser language (zh/en). Before each write the provider's previous `models` is saved to `backupDir` (default: OS temp/dsh-model-sync-backups).
+5. A toast shows added / updated / removed counts per provider, "already up to date", skipped models, and per-provider errors.
 
-Dry run (no write): `POST /api/dsh-model-sync/refresh` with body `{"dryRun": true}` from loopback returns the same result list with `wrote: false`.
+Dry run (no write): `POST /api/dsh-model-sync/refresh` with body `{"dryRun": true}` (`{"route":"<id>"}` / `{"routes":[...]}` for specific providers, `{"action":"list"}` to list them) from loopback returns the same result list with `wrote: false`.
 
 ---
 
