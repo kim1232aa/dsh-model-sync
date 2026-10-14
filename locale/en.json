@@ -1,0 +1,1 @@
+{ "meta": { "title": "Model Sync", "description": "Syncs custom/relay gateway model lists into DSH and fills context, output, vision and reasoning from models.dev. Adds full and per-provider refresh controls on the Models settings page." } }
